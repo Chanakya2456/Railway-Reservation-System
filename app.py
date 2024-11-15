@@ -148,7 +148,7 @@ def bookings():
     JOIN reservation r ON r.ticket_ID = t.ticket_ID
     JOIN trains tr ON tr.train_number = r.train_number
     JOIN passengers p ON p.adhaar_number = b.adhaar_number
-    WHERE mt.UserId = %s AND t.departure_date > %s OR (t.departure_date = %s AND t.departure_time > %s)
+    WHERE mt.UserId = %s AND (t.departure_date > %s OR (t.departure_date = %s AND t.departure_time > %s))
     ORDER BY t.departure_date ASC, t.departure_time ASC, t.ticket_cluster ASC
     """
     cursor.execute(current_bookings_query, (session['user'], today, today, now))
@@ -163,7 +163,7 @@ def bookings():
     JOIN reservation r ON r.ticket_ID = t.ticket_ID
     JOIN trains tr ON tr.train_number = r.train_number
     JOIN passengers p ON p.adhaar_number = b.adhaar_number
-    WHERE mt.UserId = %s AND t.departure_date < %s OR (t.departure_date = %s AND t.departure_time <= %s)
+    WHERE mt.UserId = %s AND (t.departure_date < %s OR (t.departure_date = %s AND t.departure_time <= %s))
     ORDER BY t.departure_date ASC, t.departure_time ASC, t.ticket_cluster ASC
     """
     cursor.execute(past_bookings_query, (session['user'], today, today, now))
