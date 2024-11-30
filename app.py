@@ -1,10 +1,23 @@
-from flask import Flask, render_template, request, redirect, flash, url_for, session, make_response
+from transformers.agents import Tool, HfApiEngine, ReactJsonAgent
+import tensorflow as tf
+from flask import Flask, render_template, request, redirect, flash, url_for, session, make_response, jsonify
 from flask_session import Session
 from datetime import datetime, timedelta
 import random
 import pdfkit
 import mysql.connector
 from mysql.connector import Error
+import os
+import json
+from groq import Groq
+from huggingface_hub import login
+
+# Replace with your Hugging Face API token
+login(token="Your Huggingface API Key")
+
+llm_engine = HfApiEngine("Qwen/Qwen2.5-72B-Instruct")
+os.environ['GROQ_API_KEY'] = "Your Groq API Key"
+llm=Groq()
 
 app = Flask(__name__)
 app.config["CACHE_TYPE"] = "null"
@@ -585,6 +598,129 @@ def ticket(filename):
 
     finally:
         connection.close()
+    
+class Retriever(Tool):
+    name = "Retriever"
+    description = (
+        "This tool retrieves the train data from the database."
+    )
+
+    inputs = {"query": {"type": "string", "description": "It should have 3 terms seperated by commas, the 2 stations in between which retrieval needs to be done and the keyword on which ordering needs to be done."}}
+    output_type = 'string'
+
+    def forward(self, query: str):  # Accept keyword arguments to receive inputs
+        terms = query.split(',')
+        source=terms[0]
+        destination=terms[1].strip()
+        queryindex=0
+        if(terms[2].strip()=='fastest'):
+            queryindex=1
+        elif terms[2].strip()=='cheapest':
+            queryindex=2
+        elif terms[2].strip()=='costliest':
+            queryindex=3
+        
+        try:
+            connection = get_db_connection()
+            cursor = connection.cursor()
+            query="""
+            SELECT t.order_in_route
+            FROM stations t
+            WHERE t.station_name= %s
+            """
+            cursor.execute(query, (source,))
+            src= cursor.fetchall()
+            cursor.execute(query, (destination,))
+            dst= cursor.fetchall()
+            if src<dst:
+                query = """
+                SELECT t.train_name, t.train_number, sd.departure_time, sa.arrival_time, t.price_per_ticket 
+                FROM trains t
+                JOIN stations sd on sd.station_name = %s
+                JOIN stations sa on sa.station_name = %s
+                JOIN stations sa_src ON t.src = sa_src.station_name
+                JOIN stations sa_dest ON t.destination = sa_dest.station_name
+                JOIN train_availability ta ON t.train_number = ta.train_number
+                WHERE (sa_src.order_in_route <= (SELECT order_in_route FROM stations WHERE stations.station_name = %s) AND 
+                sa_dest.order_in_route >= (SELECT order_in_route FROM stations WHERE stations.station_name = %s))
+                """
+            else:
+                query = """
+                SELECT t.train_name, t.train_number, sa.departure_time, sd.arrival_time, t.price_per_ticket 
+                FROM trains t
+                JOIN stations sd on sd.station_name = %s
+                JOIN stations sa on sa.station_name = %s
+                JOIN stations sa_src ON t.src = sa_src.station_name
+                JOIN stations sa_dest ON t.destination = sa_dest.station_name
+                JOIN train_availability ta ON t.train_number = ta.train_number
+                WHERE (sa_src.order_in_route > sa_dest.order_in_route AND 
+                sa_src.order_in_route >= (SELECT order_in_route FROM stations WHERE stations.station_name = %s) AND sa_dest.order_in_route <= (SELECT order_in_route FROM stations WHERE stations.station_name = %s))
+                """
+            cursor.execute(query, (source, destination, source, destination))
+            trains = cursor.fetchall()
+            #print(len(trains))
+            #print(trains)
+            
+            # List to store train info with journey time
+            journey_times = []
+            # Calculate journey time for each train and store in journey_times list
+            for train in trains:
+                session['train_departure']=train[2]
+                session['train_arrival']=train[3]
+                if session['train_departure']>session['train_arrival']:
+                    session['journey_time']=timedelta(hours=24)-(session['train_departure']-session['train_arrival'])
+                else:
+                    session['journey_time']=session['train_arrival']-session['train_departure']
+                print("Moveon")
+                journey_time = session['journey_time']
+
+                # Append to journey_times with train details and calculated journey time
+                journey_times.append({
+                    'train_name': train[0],
+                    'train_number': train[1],
+                    'journey_time': journey_time,
+                    'departure_time': train[2],
+                    'arrival_time': train[3],
+                    'price_per_ticket': train[4]
+                })
+            if queryindex==1:
+                journey_times.sort(key=lambda x: x['journey_time'])
+                top_train_name = journey_times[0]['train_name']
+                return f"the fastest train is {top_train_name}"
+            elif queryindex==2:
+                journey_times.sort(key=lambda x: (x['journey_time'], x['price_per_ticket']))
+                top_train_name = journey_times[0]['train_name']
+                return f"the cheapest train is {top_train_name}"
+            elif queryindex==3:
+                journey_times.sort(key=lambda x: x['price_per_ticket'], reverse=True)
+                top_train_name = journey_times[0]['train_name']
+                return f"the most expensive train is {top_train_name}"
+        except Exception as e:
+            flash(f"Error while fetching train list: {str(e)}")
+            return redirect(url_for('booktrain'))
+        finally:
+            connection.close()
+    
+
+@app.route('/chatbot', methods=['POST'])
+def chatbot_response():
+    user_message = request.json.get('message')
+    prompt = user_message + "\n" + "Extract station names and one the three keywords 'fastest', 'costliest', 'cheapest' (one of them will be present in the query) from the following query and return them as 'station1,station2,keyword'. Be accurate to the point and act only to rephrase the query in the format needed as 'station1,station2,keyword', do not try to answer it. The keyword is also important and the rephrased query should contain one of the following words: fastest, costliest, cheapest based on which of them is present in the query."
+    chat_completion = llm.chat.completions.create(
+        messages=[
+            {
+                "role": "user",
+                "content": prompt,
+            }
+        ],
+        model="llama-3.1-70b-versatile",
+        stream=False,
+    )
+    query = chat_completion.choices[0].message.content
+    retriever_tool = Retriever(query=query)
+    agent = ReactJsonAgent(tools=[retriever_tool], llm_engine=llm_engine, max_iterations=4, verbose=2)
+    agent_output = agent.run(query)
+    return jsonify({'response': agent_output})
 
 if __name__ == '__main__':
     app.run(debug=True)
