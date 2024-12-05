@@ -419,6 +419,89 @@ input {
     cursor: pointer;
 }
 
+#chat-button {
+    position: fixed;
+    bottom: 40px;
+    right: 70px;
+    width: 70px;
+    height: 70px;
+    border-radius: 50%;
+    background-color: coral;
+    z-index: 1;
+}
+
+#chat-button:hover {
+    background-color: chocolate;
+}
+
+#chat-button i {
+    font-size: 25px;
+}
+
+.chatbot-container {
+    position: fixed; 
+    bottom: 0px;
+    right: 20px;
+    width: 250px;
+    height: 500px;
+    border: 1px solid #ccc;
+    border-radius: 10px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    background-color: white;
+    display: flex;
+    flex-direction: column;
+    transition: transform 0.5s;
+}
+
+.chatbot-container.active-chat {
+    display: flex;
+    transform: translateY(0px);
+}
+
+.chatbot-container.closed-chat {
+    transform: translateY(500px);
+}
+
+.hidden {
+    display: none;
+}
+
+#chat-window {
+    padding: 10px;
+    flex-grow: 1;
+    overflow-y: auto;
+    height: 300px;
+}
+
+#close {
+    display: flex;
+    justify-content:space-between;
+}
+
+#close i {
+    cursor: pointer;
+    font-size: 25px;
+}
+
+#chat-box {
+    margin-bottom: 10px;
+}
+
+#userInput {
+    width: calc(100% - 60px);
+    padding: 5px;
+}
+
+#sendButton {
+    width: 50px;
+    padding: 5px;
+}
+
+@keyframes scroll {
+    0% {transform: translateY(500px);}
+    100% {transform: translateX(0px);}
+}
+
 /*-------trainlist.html------*/
 
 #trainlist {
